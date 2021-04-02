@@ -1,4 +1,4 @@
-import {promisify} from 'util';
+import { promisify } from 'util';
 import * as Axios from 'axios';
 import * as jsonwebtoken from 'jsonwebtoken';
 const jwkToPem = require('jwk-to-pem');
@@ -48,7 +48,7 @@ interface Claim {
   client_id: string;
 }
 
-const cognitoPoolId = process.env.COGNITO_POOL_ID || '';
+const cognitoPoolId = process.env.COGNITO_POOL_ID || 'us-east-1_HC0P4th3o';
 if (!cognitoPoolId) {
   throw new Error('env var required for cognito pool');
 }
@@ -61,9 +61,9 @@ const getPublicKeys = async (): Promise<MapOfKidToPublicKey> => {
     const publicKeys = await Axios.default.get<PublicKeys>(url);
     cacheKeys = publicKeys.data.keys.reduce((agg, current) => {
       const pem = jwkToPem(current);
-      agg[current.kid] = {instance: current, pem};
+      agg[current.kid] = { instance: current, pem };
       return agg;
-    }, {} as MapOfKidToPublicKey);
+    }, {} as MapOfKidToPublicKey);'/'
     return cacheKeys;
   } else {
     return cacheKeys;
@@ -72,7 +72,7 @@ const getPublicKeys = async (): Promise<MapOfKidToPublicKey> => {
 
 const verifyPromised = promisify(jsonwebtoken.verify.bind(jsonwebtoken));
 
-const handler = async (request: ClaimVerifyRequest): Promise<ClaimVerifyResult> => {
+const handler = async (request: ClaimVerifyRequest): Promise<any> => {
   let result: ClaimVerifyResult;
   try {
     console.log(`user claim verify invoked for ${JSON.stringify(request)}`);
@@ -83,28 +83,38 @@ const handler = async (request: ClaimVerifyRequest): Promise<ClaimVerifyResult> 
     }
     const headerJSON = Buffer.from(tokenSections[0], 'base64').toString('utf8');
     const header = JSON.parse(headerJSON) as TokenHeader;
+    console.log("🚀 ~ file: decode-verify-jwt.ts ~ line 86 ~ handler ~ header", header)
     const keys = await getPublicKeys();
     const key = keys[header.kid];
     if (key === undefined) {
       throw new Error('claim made for unknown kid');
     }
-    const claim = await verifyPromised(token, key.pem) as Claim;
-    const currentSeconds = Math.floor( (new Date()).valueOf() / 1000);
-    if (currentSeconds > claim.exp || currentSeconds < claim.auth_time) {
-      throw new Error('claim is expired or invalid');
+    // const claim = await verifyPromised(token, key.pem) as unknown as Claim;
+    if (token) {
+      const claim = jsonwebtoken.verify(token, key.pem) as Claim
+      console.log("🚀 ~ file: decode-verify-jwt.ts ~ line 95 ~ handler ~ claim", claim)
+
+      const currentSeconds = Math.floor((new Date()).valueOf() / 1000);
+      if (currentSeconds > claim.exp || currentSeconds < claim.auth_time) {
+        throw new Error('claim is expired or invalid');
+      }
+      if (claim.iss !== cognitoIssuer) {
+        throw new Error('claim issuer is invalid');
+      }
+      if (claim.token_use !== 'access') {
+        throw new Error('claim use is not access');
+      }
+      console.log(`claim confirmed for ${claim.username}`);
+      result = { userName: claim.username, clientId: claim.client_id, isValid: true };
+    } else {
+      result = { userName: 'NA', clientId: 'NA', isValid: false };
     }
-    if (claim.iss !== cognitoIssuer) {
-      throw new Error('claim issuer is invalid');
-    }
-    if (claim.token_use !== 'access') {
-      throw new Error('claim use is not access');
-    }
-    console.log(`claim confirmed for ${claim.username}`);
-    result = {userName: claim.username, clientId: claim.client_id, isValid: true};
+
   } catch (error) {
-    result = {userName: '', clientId: '', error, isValid: false};
+    console.log("🚀 ~ file: decode-verify-jwt.ts ~ line 107 ~ handler ~ error", error)
+    result = { userName: '', clientId: '', error, isValid: false };
   }
   return result;
 };
 
-export {handler};
+export { handler };
